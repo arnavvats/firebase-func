@@ -40,7 +40,7 @@ export const helloWorld = functions.firestore.document('verifications/{id}').onC
             })).then(collegeNames => {
                 filteredUsers.forEach((user, i) => {
                     user.ambassador.rank = i+1;
-                    user.collegeName = collegeNames[i].data.name;
+                    user.collegeName = collegeNames[i].data().name;
                      admin.firestore().doc('users/' + user.id).update({ambassador: user.ambassador}).then(success).catch(success);
                 });
                      admin.firestore().doc('leaderboard/ambassadors').set({leaders: filteredUsers.slice(0,5)}).then((success)).catch(success);
