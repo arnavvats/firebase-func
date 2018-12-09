@@ -1,55 +1,131 @@
 import * as functions from 'firebase-functions';
+import { NotificationFunctions } from './notifications';
 
 // // Start writing Firebase Functions
 // // https://firebase.google.com/docs/functions/typescript
 //
 import * as admin from "firebase-admin";
-
-const app = admin.initializeApp();
-export const helloWorld = functions.firestore.document('verifications/{id}').onCreate((snapshot, context) => {
-    return admin.firestore().doc('users/' + context.params.id).get().then(signedUpUserRef => {
-        const signedUpUser = signedUpUserRef.data();
-        if(signedUpUser.referrer) {
-            const userRef = admin.firestore().doc('users/' + signedUpUser.referrer);
-              admin.firestore().runTransaction((transaction) => {
-                return transaction.get(userRef).then(referrer => {
-                    const referrerData = referrer.data();
-                    if(referrer.exists) {
-                        if(!referrerData.ambassador) {
-                            referrerData.ambassador = {
-                                points: 0,
-                                count: 0,
-                                rank: 0
-                            };
-                        }
-                       referrerData.ambassador.points += 5;
-                       referrerData.ambassador.count += 1;
-                        return transaction.update(userRef, referrerData);
-                    }
-                    return new Promise((resolve,reject) => resolve(true));
-                });
-            }).then(res => {
-        return admin.firestore().collection('users').get().then(snap => {
-            const users = snap.docs.map(doc => {
-                return <any>{id: doc.id,...doc.data()};
-            });
-            const filteredUsers = users.filter(user => !!user.ambassador);
-            filteredUsers.sort((a: any, b: any) =>  parseInt(b.ambassador.points) - parseInt(a.ambassador.points));
-            return Promise.all(filteredUsers.map(userOfCollege => {
-                return admin.firestore().doc('colleges/' + userOfCollege.collegeId).get();
-            })).then(collegeNames => {
-                filteredUsers.forEach((user, i) => {
-                    user.ambassador.rank = i+1;
-                    user.collegeName = collegeNames[i].data().name;
-                     admin.firestore().doc('users/' + user.id).update({ambassador: user.ambassador}).then(success).catch(success);
-                });
-                     admin.firestore().doc('leaderboard/ambassadors').set({leaders: filteredUsers.slice(0,5)}).then((success)).catch(success);
-            });
+const notificationFunctions = new NotificationFunctions();
+admin.initializeApp();
+export const hourly_job = functions.pubsub
+  .topic('hourly-tick')
+  .onPublish((message) => {
+    console.log("This job is run every hour!");
+    if (message.data) {
+      const dataString = Buffer.from(message.data, 'base64').toString();
+      console.log(`Message Data: ${dataString}`);
+    }
+    return admin.database().ref('users').once('value').then(res => {
+        const usersRef = res.val();
+        console.log(usersRef);
+	console.log(res);
+        const uidArray = Object.keys(usersRef);
+        const sortedAmbassadors = uidArray
+        .map(uid => { return {id: uid,...usersRef[uid]}})
+        .filter(user => {return !!(user && user.ambassador)})
+        .sort((a,b) => { return (b.ambassador.points - a.ambassador.points) });
+        console.log('sortedAmbassadors',sortedAmbassadors);
+        const updateAllRankPromises = sortedAmbassadors.map((user, i) => {
+            user.ambassador.rank = i+1;
+            return admin.database().ref('users/' + user.id + '/ambassador').set(user.ambassador);
         });
-    }).catch(success);
-    } 
-}).catch(success);
+        return Promise.all(updateAllRankPromises).then(() => {
+            const leaders = sortedAmbassadors.slice(0,5).map(user => {
+                return {
+                    collegeId: user.collegeId, 
+                    name: user.name, 
+                    points: user.ambassador.points, 
+                    rank: user.ambassador.rank,
+                    collegeName: ''
+                };
+            });
+            const collegeNamesPromises = sortedAmbassadors.map(ambassador => {
+                return admin.database().ref('colleges/' + ambassador.collegeId).once('value');
+            })
+           return Promise.all(collegeNamesPromises).then(collegeNames => {
+               leaders.forEach((leader,i) => {
+                delete leader.collegeId;
+                leader.collegeName = (collegeNames[i].val() && collegeNames[i].val().name) || 'other';
+               });
+               console.log(leaders);
+            return admin.database().ref('leaderboard/ambassadors').set(leaders);
+           });
+        });
+    });
+  });
+
+export const daily_job = functions.pubsub.topic('daily-tick').onPublish((message) => {
+    console.log("This job is run every day!");
+    if (message.data) {
+      const dataString = Buffer.from(message.data, 'base64').toString();
+      console.log(`Message Data: ${dataString}`);
+    }
+    return admin.database().ref('/events').once('value')
+    .then(success)
+    .then(events => {
+        const eventKeys = Object.keys(events);
+        const eventId = eventKeys[(Math.random() * (eventKeys.length - 1)).toFixed(0)];
+        console.log(eventId);
+        
+        const notificationData = {
+            message: {
+                token: null,
+                notification: {
+                     title: "TCF'19 Event of the Day",
+                    body: "The event of the day is " + events[eventId]['name'] + '. Click here to learn more about the event!!'
+                    },
+                    webpush: {
+                    headers: {
+                        Urgency: 'high'
+                        },
+                    fcm_options: {
+                        link: 'https://tcf.nitp.tech/' + eventId
+                    },
+                    notification: {
+                        body: "TCF Event of the Day is " + events[eventId]['name'] + '. Click here to learn more about the event!!',
+                        requireInteraction: "true",
+                        badge: "/Corona.png"
+                      }
+                    }
+            },
+            messageString: "The event of the day is " + events[eventId]['name'] + '. Click here to learn more about the event!!'
+        };
+        return notificationFunctions.sendNotificationToAllUsers(notificationData);
+    })
+});
+
+
+export const defaultFn = functions.database.ref('verifications/{id}').onWrite((snapshot, context) => {
+    const signedUpUserUid = context.params.id;
+    const data = snapshot.after.val();
+    if(data && data.verified && data.verified === true) {
+     return admin.database().ref('users/' + signedUpUserUid).once('value').then(signedUpUserRef => {
+        const signedUpUser = signedUpUserRef.val();
+        if(signedUpUser.referrer) {
+            return admin.database().ref('users/' + signedUpUser.referrer).once('value').then(referrerData => {
+                if(referrerData.exists) {
+                    const referrerDataVal = referrerData.val();
+                    if(!referrerDataVal.ambassador) {
+                        referrerDataVal.ambassador = {
+                            points: 0,
+                            count: 0,
+                            rank: 0
+                        };
+                    }
+                    referrerDataVal.ambassador.points += 5;
+                    referrerDataVal.ambassador.count += 1;
+                    return admin.database().ref('users/' + signedUpUser.referrer).update(referrerDataVal);
+                }
+                return null;
+
+            });
+        }
+        return null;
+     });
+    
+    }
+    return null;
 });
 function success(res) {
-    return res;
+    return res.val();
 }
