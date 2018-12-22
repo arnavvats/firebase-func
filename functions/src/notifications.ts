@@ -22,8 +22,10 @@ export class NotificationFunctions  {
                                 resolve('success');
                             })
                             .catch(error => {
-                               // console.log(error);
-                                resolve('success');
+                                console.log('notification failure to unknown/' + token,error);
+                               return admin.database().ref('fcmTokenList/unknown/' + token).remove().then(() => {
+                                    resolve('success');
+                                });
                             });
                         });
                     }));
@@ -50,7 +52,8 @@ export class NotificationFunctions  {
         return Promise.all([this.getUserDetail(uid),
              (tokenList && Promise.resolve(tokenList)) || this.getUserFcmTokenList(uid)])
         .then(res => {
-            if(res[1] === null) {
+            if(res[1] === null || res[0] === null) {
+                console.log(res[0], res[1]);
                 return null;
             }
             appendBodyStringData(notificationData,'Hello ' + res[0].name + '  ');
@@ -61,19 +64,29 @@ export class NotificationFunctions  {
                     admin.messaging().send(notificationData.message).then(() => {
                         resolve('success');
                     }).catch(error => {
-                       // console.log(error);
-                        resolve('success');
+                        console.log('notification failure to users/' + uid + '/' + token,error);
+                        return admin.database().ref('fcmTokenList/users/' + uid + '/' + token).remove().then(() => {
+                            resolve('success');
+                        });
                     });
                  }); 
             }));
         })
     }
     getUserFcmTokenList = (uid) => {
-        return admin.database().ref('/fcmTokenList/users/' + uid).once('value').then(success);
+        return admin.database().ref('/fcmTokenList/users/' + uid).once('value')
+        .then(success)
+        .then(mapping => Object.keys(mapping));
     }
     getAllUserFcmTokenList = () => {
         return admin.database().ref('/fcmTokenList/users/').once('value')
-        .then(success);
+        .then(success)
+        .then(userToTokenMappings => {
+            Object.keys(userToTokenMappings).forEach(userId => {
+                userToTokenMappings[userId] = Object.keys(userToTokenMappings[userId]);
+            });
+            return userToTokenMappings;
+        });
     };
     getAllAnonymousFcmToken = () => {
         return admin.database().ref('/fcmTokenList/unknown/').once('value')

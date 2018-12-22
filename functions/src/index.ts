@@ -79,19 +79,54 @@ export const daily_job = functions.pubsub.topic('daily-tick').onPublish((message
                         Urgency: 'high'
                         },
                     fcm_options: {
-                        link: 'https://tcf.nitp.tech/' + eventId
+                        link: 'https://tcf.nitp.tech/events/' + eventId
                     },
                     notification: {
                         body: "TCF Event of the Day is " + events[eventId]['name'] + '. Click here to learn more about the event!!',
                         requireInteraction: "true",
-                        badge: "/Corona.png"
+                        badge: "/Corona.png",
+                        click_action: 'https://tcf.nitp.tech/events/' + eventId
                       }
                     }
             },
             messageString: "The event of the day is " + events[eventId]['name'] + '. Click here to learn more about the event!!'
         };
-        return notificationFunctions.sendNotificationToAllUsers(notificationData);
+        return notificationFunctions.sendNotificationToEveryone(notificationData);
     })
+});
+export const eventNotice = functions.https.onCall((data, context) => {
+    console.log(data);
+    if(data && data.eventId && data.eventNotice) {
+    const notificationData = {message: {
+        token: null,
+        notification: {
+             title: "TCF'19 Notice",
+            body: data.eventNotice
+            },
+            webpush: {
+            headers: {
+                Urgency: 'high'
+                },
+            fcm_options: {
+                link: 'https://tcf.nitp.tech/events/' + data.eventId
+            },
+            notification: {
+                body: data.eventNotice,
+                requireInteraction: "true",
+                badge: "/Corona.png",
+                click_action: 'https://tcf.nitp.tech/events/' + data.eventId
+              },
+            }
+        },
+        messageString: data.eventNotice
+    };
+    return notificationFunctions.sendNotificationToEveryone(notificationData).then(() => {
+        return {
+            data: 'Success!! Notification sent.'
+        }
+    });
+    }
+    return { error: 'Sorry...an error occurred!'};
 });
 
 
@@ -129,3 +164,32 @@ export const defaultFn = functions.database.ref('verifications/{id}').onWrite((s
 function success(res) {
     return res.val();
 }
+
+// export const testFn = functions.https.onCall((data, context) => {
+//     const notificationData = {message: {
+//         token: null,
+//         notification: {
+//              title: "TCF'19 Notice",
+//             body: data.eventNotice
+//             },
+//             webpush: {
+//             headers: {
+//                 Urgency: 'high'
+//                 },
+//             fcm_options: {
+//                 link: 'https://tcf.nitp.tech/events/' + data.eventId
+//             },
+//             notification: {
+//                 body: data.eventNotice,
+//                 requireInteraction: "true",
+//                 badge: "/Corona.png",
+//                 click_action: 'https://tcf.nitp.tech/events/' + data.eventId
+//               },
+//             }
+//         },
+//         messageString: data.eventNotice
+//     };
+//     return notificationFunctions.sendNotificationToUser('aOBh4vQFatTHf9A8Sw1HvceGJ3b2', notificationData).then((res) => {
+//         return console.log('sent');
+//     });
+// });
